@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>加速度検知テスト v4 (Z軸対応版)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <style>
+        /* v4 クリーン版 CSS */
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; text-align: center; padding: 20px; background-color: #f0f0f0; color: #333; transition: background-color 0.1s ease; }
+        h1 { font-size: 1.5rem; }
+        p { font-size: 1rem; }
+        #permissionButton { font-size: 1.2rem; padding: 15px 30px; cursor: pointer; border-radius: 10px; border: none; background-color: #007aff; color: white; font-weight: bold; box-shadow: 0 4px 10px rgba(0,0,0,0.1); margin: 20px 0; }
+        #status { font-size: 0.9rem; color: #555; margin-top: 20px; min-height: 1.2em; }
+        #data { font-size: 1.8rem; font-weight: bold; color: #000; margin-top: 10px; min-height: 1.5em; }
+        #result { font-size: 3rem; font-weight: 800; color: #d90000; min-height: 1.5em; margin-top: 10px; }
+        body.detected { background-color: #ffcccc; }
+        hr { border: 0; border-top: 1px solid #ccc; margin: 30px 10px; }
+        h2 { font-size: 1.2rem; }
+        .setting-container { margin: 20px 0; padding: 10px; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        #thresholdSlider { width: 70%; margin: 10px 0; }
+        #thresholdValue { font-weight: bold; font-size: 1.1rem; color: #007aff; display: inline-block; width: 40px; }
+        h3 { font-size: 1.1rem; }
+        #logList { list-style-type: none; padding: 0; margin-top: 10px; max-height: 200px; overflow-y: auto; border: 1px solid #ccc; background-color: #fff; border-radius: 8px; text-align: left; }
+        #logList li { padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 0.9rem; }
+        #logList li:nth-child(odd) { background-color: #f9f9f9; }
+    </style>
+</head>
+<body>
+
+    <h1>スマホ加速度検知 v4</h1>
+    <p>「開始」ボタンを押し、画面を上(並行)に向けたまま、スマホを上に素早く振ってください。</p>
+
+    <button id="permissionButton">検知を開始</button>
+    <div id="status">許可待ち...</div>
+    <div id="data">Z加速度: 0.00</div>
+    <div id="result"></div>
+    <hr>
+    <h2>設定とログ</h2>
+    <div class="setting-container">
+        <label for="thresholdSlider">検知しきい値 (振りの強さ): </label>
+        <input type="range" id="thresholdSlider" min="5" max="40" step="1" value="15">
+        <span id="thresholdValue">15.0</span>
+    </div>
+    <h3>検知ログ (最新が上)</h3>
+    <ul id="logList"></ul>
+
+
+    <script>
+        // DOM要素を取得
+        const permissionButton = document.getElementById('permissionButton');
+        const statusDiv = document.getElementById('status');
+        const dataDiv = document.getElementById('data');
+        const resultDiv = document.getElementById('result');
+        const thresholdSlider = document.getElementById('thresholdSlider');
+        const thresholdValueSpan = document.getElementById('thresholdValue');
+        const logList = document.getElementById('logList');
+
+        // しきい値
+        let THRESHOLD = parseFloat(thresholdSlider.value);
+        let isDetecting = false;
+        
+        // 重力加速度 (Z軸) を推定するための変数
+        let gravityZ = 0; 
+        const ALPHA = 0.8; 
+        let sensorMode = 'Unknown'; 
+
+        // スライダーの処理
+        thresholdSlider.addEventListener('input', () => {
+            THRESHOLD = parseFloat(thresholdSlider.value);
+            thresholdValueSpan.textContent = THRESHOLD.toFixed(1);
+        });
+
+        // 許可ボタンの処理
+        permissionButton.addEventListener('click', () => {
+            if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                DeviceMotionEvent.requestPermission()
+                    .then(permissionState => {
+                        if (permissionState === 'granted') {
+                            startMotionDetection();
+                        } else {
+                            statusDiv.textContent = '加速度センサーの使用が許可されませんでした。';
+                        }
+                    })
+                    .catch(error => {
+                        // ( 'G' のタイポを修正済み)
+                        statusDiv.textContent = '許可エラー: ' + error.message;
+                    });
+            } else {
+                startMotionDetection();
+            }
+        });
+
+        // 監視開始
+        function startMotionDetection() {
+            permissionButton.style.display = 'none';
+            statusDiv.textContent = '監視中... 画面を上に向けて上に振ってください'; 
+            window.addEventListener('devicemotion', handleMotionEvent);
+        }
+
+        // 'devicemotion' イベント処理 (Z軸監視)
+        function handleMotionEvent(event) {
+            
+            let z_accel_raw = 0; // 生のZ軸加速度
+            let z_accel = 0;     // 計算後の「振りの強さ」
+
+            // (A) iPhoneパターン: event.acceleration (重力除く) の「z」が利用可能な場合
+            if (event.acceleration && typeof event.acceleration.z === 'number') { 
+                
+                if (sensorMode === 'Unknown') sensorMode = 'A (重力除く)';
+                
+                z_accel_raw = event.acceleration.z; 
+                z_accel = z_accel_raw; // そのまま「振りの強さ」として使う
+            
+            // (B) Androidパターン: event.accelerationIncludingGravity (重力込み) の「z」しか使えない場合
+            } else if (event.accelerationIncludingGravity && typeof event.accelerationIncludingGravity.z === 'number') { 
+                
+                if (sensorMode === 'Unknown') sensorMode = 'G (重力込み)';
+
+                z_accel_raw = event.accelerationIncludingGravity.z; 
+                
+                // ローパスフィルタで重力成分(gravityZ)を推定
+                gravityZ = ALPHA * gravityZ + (1 - ALPHA) * z_accel_raw; 
+                
+                // 「振りの強さ」 = 「全体の加速度」 - 「重力成分」
+                z_accel = z_accel_raw - gravityZ; 
+
+            } else {
+                statusDiv.textContent = '加速度センサーのデータを取得できません。';
+                return;
+            }
+
+            // データ表示
+            dataDiv.textContent = `Z加速度 (振りの強さ): ${z_accel.toFixed(2)}`; 
+            
+            if (statusDiv.textContent.startsWith('監視中...')) {
+                statusDiv.textContent = `監視中 (モード: ${sensorMode})`;
+            }
+
+            // 検知判定 (「振りの強さ」が しきい値 を超えたか)
+            if (z_accel > THRESHOLD && !isDetecting) { 
+                
+                isDetecting = true;
+                resultDiv.textContent = '検知！';
+                document.body.classList.add('detected');
+
+                // ログ追加
+                const now = new Date();
+                const timeString = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.Seconds().toString().padStart(2, '0')}`;
+                
+                const logEntry = document.createElement('li');
+                logEntry.textContent = `[${timeString}] 検知: ${z_accel.toFixed(2)} (Raw: ${z_accel_raw.toFixed(2)}, Mode: ${sensorMode})`; 
+                
+                logList.prepend(logEntry);
+
+                console.log(`検知: ${z_accel.toFixed(2)} m/s^2`); 
+
+                // 1秒後にリセット
+                setTimeout(() => {
+                    resultDiv.textContent = '';
+                    document.body.classList.remove('detected');
+                    isDetecting = false;
+                }, 1000);
+            }
+        }
+    </script>
+
+</body>
+</html>
