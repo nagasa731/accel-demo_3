@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>加速度検知テスト v4 (Z軸対応版)</title>
+    <title>加速度検知テスト</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <style>
         /* v4 クリーン版 CSS */
@@ -37,7 +37,7 @@
     <hr>
     <h2>設定とログ</h2>
     <div class="setting-container">
-        <label for="thresholdSlider">検知しきい値 (振りの強さ): </label>
+        <label for="thresholdSlider">検知しきい値 : </label>
         <input type="range" id="thresholdSlider" min="5" max="40" step="1" value="15">
         <span id="thresholdValue">15.0</span>
     </div>
@@ -130,7 +130,7 @@
             }
 
             // データ表示
-            dataDiv.textContent = `Z加速度 (振りの強さ): ${z_accel.toFixed(2)}`; 
+            dataDiv.textContent = `Z加速度 : ${z_accel.toFixed(2)}`; 
             
             if (statusDiv.textContent.startsWith('監視中...')) {
                 statusDiv.textContent = `監視中 (モード: ${sensorMode})`;
